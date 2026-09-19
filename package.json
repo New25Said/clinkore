@@ -1,7 +1,7 @@
 {
-  "name": "clinkore-bot",
+  "name": "darek-bot",
   "version": "1.0.0",
-  "description": "ClinKore v1 revOlution - Bot de IA para Discord",
+  "description": "DAREK v1 revOlution - Plantilla clonable de Bot de Discord con IA",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
