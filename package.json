@@ -1,13 +1,13 @@
 {
-  "name": "darek-bot",
+  "name": "darek",
   "version": "1.0.0",
-  "description": "DAREK v1 revOlution - Plantilla clonable de Bot de Discord con IA",
+  "description": "DAREK v1 revOlution - Bot de Discord con IA y personalidad autónoma",
   "main": "index.js",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "@google/genai": "^0.1.1",
+    "@google/generative-ai": "^0.21.0",
     "discord.js": "^14.14.1",
     "dotenv": "^16.4.5"
   }
