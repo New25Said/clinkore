@@ -49,9 +49,6 @@ const MODEL_FALLBACKS = MODEL_ENDPOINTS.map(url => {
 const MEMORY_FILE = './memory.json';
 const PRESENCIAS_ALEATORIAS = ['online', 'idle', 'dnd'];
 
-// Función auxiliar para esperar N milisegundos cuando hay error 429
-const esperar = (ms) => new Promise(resolve => setTimeout(resolve, ms));
-
 function cargarMemorias() {
   if (!fs.existsSync(MEMORY_FILE)) fs.writeFileSync(MEMORY_FILE, '{}');
   try {
@@ -81,40 +78,40 @@ function cargarPrompt() {
   }
 }
 
-async function generarRespuestaIA(contents, systemInstruction) {
+async function generarRespuestaIA(contents, systemInstruction, maxTokens = 250) {
   for (const modelName of MODEL_FALLBACKS) {
     try {
       const model = genAI.getGenerativeModel({
         model: modelName,
-        systemInstruction: systemInstruction
+        systemInstruction: systemInstruction,
+        generationConfig: {
+          maxOutputTokens: maxTokens,
+          temperature: 0.8
+        }
       });
 
       const result = await model.generateContent(contents);
       return result.response.text();
     } catch (error) {
       console.warn(`[Fallback] El modelo ${modelName} falló:`, error.message);
-      // Pausa de 1.5 segundos si se golpea el límite de velocidad (Rate Limit / Quota Exceeded)
-      if (error.message.includes('429') || error.message.includes('Quota exceeded')) {
-        await esperar(1500);
-      }
     }
   }
   throw new Error('Todos los modelos fallaron debido a cuota o conexión.');
 }
 
-// Genera un estado personalizado dinámico creado por la IA según su personalidad
+// Genera un estado personalizado dinámico y ultra rápido creado por la IA
 async function cambiarEstadoAleatorio() {
   const presenciaRandom = PRESENCIAS_ALEATORIAS[Math.floor(Math.random() * PRESENCIAS_ALEATORIAS.length)];
   let estadoGenerado = 'Pensando en ti... 🙂';
 
   try {
-    const promptEstado = `${cargarPrompt()}\n\nTAREA: Genera una frase o estado personalizado MUY CORTO para tu perfil de Discord (máximo 12 palabras). Debe reflejar tu personalidad de psicópata amigable. NO uses comillas, NO des explicaciones, solo escribe el texto del estado.`;
-    const respuesta = await generarRespuestaIA(['Genera tu estado de perfil actual.'], promptEstado);
+    const promptEstado = `${cargarPrompt()}\n\nTAREA: Genera una frase MUY CORTA para tu estado (máximo 6 palabras). Sé conciso y directo. NO comillas.`;
+    const respuesta = await generarRespuestaIA(['Estado actual.'], promptEstado, 30);
     if (respuesta && respuesta.trim()) {
       estadoGenerado = respuesta.trim().substring(0, 128);
     }
   } catch (err) {
-    console.error('Error al generar estado con IA (Cuota agotada temporalmente), usando estado base.');
+    console.error('Error al generar estado con IA, usando estado base.');
   }
 
   client.user.setPresence({
@@ -136,7 +133,6 @@ client.once('ready', () => {
   console.log(`[DAREK] Vivo como ${client.user.tag}`);
 
   cambiarEstadoAleatorio();
-  // Cambia de estado aleatoriamente cada 20 a 50 minutos para cuidar la cuota gratuita
   setInterval(() => {
     cambiarEstadoAleatorio();
   }, Math.floor(Math.random() * (3000000 - 1200000 + 1)) + 1200000);
@@ -151,7 +147,6 @@ client.on('messageCreate', async (message) => {
   const esDM = !message.guild;
   const contieneNombre = contenido.includes(nombreBot);
 
-  // 5% de probabilidad aleatoria de intervenir espontáneamente en cualquier chat
   const intervieneAleatoriamente = Math.random() < 0.05;
 
   if (fueMencionado || esDM || contieneNombre || intervieneAleatoriamente) {
@@ -177,7 +172,7 @@ client.on('messageCreate', async (message) => {
         }
       }
 
-      const ultimosMensajes = await message.channel.messages.fetch({ limit: 25 });
+      const ultimosMensajes = await message.channel.messages.fetch({ limit: 10 });
       const historialFormateado = Array.from(ultimosMensajes.values())
         .reverse()
         .map(m => `${m.author.username}: ${m.content}`)
@@ -201,6 +196,9 @@ client.on('messageCreate', async (message) => {
 
       const systemPrompt = `${cargarPrompt()}
 
+--- REGLA DE VELOCIDAD ---
+Responde de forma MUY CORTA, CONCISA Y RÁPIDA (máximo 2 a 3 oraciones cortas). No des explicaciones largas ni rodeos.
+
 --- DATOS EN TIEMPO REAL DEL USUARIO ---
 Usuario: ${message.author.username} (Apodo: ${message.member?.displayName || message.author.username})
 Actividad actual: ${datosActividad}
@@ -216,7 +214,7 @@ El bot lo guardará automáticamente sin que parezca un comando.`;
       const promptEntrada = `Historial del grupo:\n${historialFormateado}\n\nMensaje de ${message.author.username}: ${message.content}`;
       partesEntrada.push(promptEntrada);
 
-      let respuestaIA = await generarRespuestaIA(partesEntrada, systemPrompt);
+      let respuestaIA = await generarRespuestaIA(partesEntrada, systemPrompt, 200);
 
       const matchMemoria = respuestaIA.match(/\[MEMORIA:\s*(.*?)\]/i);
       if (matchMemoria) {
