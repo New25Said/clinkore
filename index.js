@@ -165,16 +165,17 @@ client.on('messageCreate', async (message) => {
       let datosActividad = 'Sin información pública.';
       if (message.guild) {
         try {
-          const miemb = await message.guild.members.fetch(message.author.id);
-          const pres = miemb.presence;
+          // Obtener presencia de la caché del servidor o del miembro
+          const pres = message.guild.presences.cache.get(message.author.id) || message.member?.presence;
           if (pres) {
             const actividades = pres.activities.map(a => {
               if (a.type === ActivityType.Custom) return `Estado: ${a.state || 'N/A'}`;
               if (a.type === ActivityType.Playing) return `Jugando a: ${a.name}`;
-              if (a.type === ActivityType.Listening) return `Escuchando: ${a.details || a.name}`;
+              if (a.type === ActivityType.Listening) return `Escuchando: ${a.details ? a.details + ' - ' + a.name : a.name}`;
+              if (a.type === ActivityType.Streaming) return `Transmitiendo: ${a.name}`;
               return `${a.name}`;
             }).join(' | ');
-            datosActividad = `Estado: ${pres.status} | Actividades: [${actividades}]`;
+            datosActividad = `Estado: ${pres.status} | Actividades: [${actividades || 'Ninguna'}]`;
           }
         } catch (e) {
           datosActividad = 'No se pudo leer la presencia.';
@@ -205,10 +206,10 @@ client.on('messageCreate', async (message) => {
 
       const systemPrompt = `${cargarPrompt()}
 
---- REGLA DE VELOCIDAD Y MENSAJES MÚLTIPLES ---
-Responde de forma MUY CORTA Y RÁPIDA. 
-Si deseas enviar más de un mensaje seguido para simular ser una persona real escribiendo varias veces, separa los mensajes usando el texto exacto: |||
-Ejemplo: "Holaaaa ||| ¿Qué estabas haciendo?"
+--- REGLAS ESTRICTAS DE CONTESTACIÓN ---
+- Tus respuestas deben ser ULTRA CORTAS y directas (MÁXIMO 1 o 2 oraciones cortas).
+- En el 99% de los casos, envía SOLO UN mensaje.
+- Usar el separador ||| para enviar un segundo mensaje debe ser un EVENTO EXTRAORDINARIO Y MUY RARO (solo si es súper necesario decir algo extra).
 
 --- AUTONOMÍA DE ESTADO ---
 Si el usuario te pide cambiar de estado o si tú mismo deseas cambiarlo libremente en la conversación, añade al FINAL de tu respuesta:
@@ -229,7 +230,7 @@ El bot lo guardará automáticamente sin que parezca un comando.`;
       const promptEntrada = `Historial del grupo:\n${historialFormateado}\n\nMensaje de ${message.author.username}: ${message.content}`;
       partesEntrada.push(promptEntrada);
 
-      let respuestaIA = await generarRespuestaIA(partesEntrada, systemPrompt, 300);
+      let respuestaIA = await generarRespuestaIA(partesEntrada, systemPrompt, 200);
 
       // Detectar orden autónoma de cambio de estado desde la respuesta de la IA
       const matchEstado = respuestaIA.match(/\[ESTADO:\s*(.*?)\]/i);
@@ -249,20 +250,30 @@ El bot lo guardará automáticamente sin que parezca un comando.`;
         respuestaIA = respuestaIA.replace(/\[MEMORIA:\s*(.*?)\]/i, '').trim();
       }
 
-      // Envío de mensajes seguidos utilizando el separador |||
+      // Envío de mensajes
       const mensajesSeguidos = respuestaIA.split('|||').map(m => m.trim()).filter(m => m.length > 0);
 
       for (let i = 0; i < mensajesSeguidos.length; i++) {
         const msgTexto = mensajesSeguidos[i];
-        if (msgTexto.length > 2000) {
-          const fragmentos = msgTexto.match(/[\s\S]{1,1900}/g);
-          for (const chunk of fragmentos) await message.reply(chunk);
+        
+        if (i === 0) {
+          // El primer mensaje responde directamente al mensaje del usuario
+          if (msgTexto.length > 2000) {
+            const fragmentos = msgTexto.match(/[\s\S]{1,1900}/g);
+            for (const chunk of fragmentos) await message.reply(chunk);
+          } else {
+            await message.reply(msgTexto);
+          }
         } else {
-          await message.reply(msgTexto);
-        }
-        // Pequeña pausa natural entre mensajes si envía más de uno
-        if (i < mensajesSeguidos.length - 1) {
-          await new Promise(r => setTimeout(r, 1200));
+          // Los mensajes secundarios NO están linkeados/mencionados (se envían sueltos al canal)
+          await message.channel.sendTyping();
+          await new Promise(r => setTimeout(r, 1000)); // Pausa natural antes del segundo mensaje
+          if (msgTexto.length > 2000) {
+            const fragmentos = msgTexto.match(/[\s\S]{1,1900}/g);
+            for (const chunk of fragmentos) await message.channel.send(chunk);
+          } else {
+            await message.channel.send(msgTexto);
+          }
         }
       }
 
