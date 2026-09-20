@@ -4,33 +4,42 @@ const fs = require('fs');
 const http = require('http');
 require('dotenv').config();
 
-// Inicializar cliente con los INTENTS necesarios para leer actividad y mensajes
 const client = new Client({
   intents: [
     GatewayIntentBits.Guilds,
     GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.GuildPresences,     // Permite leer actividades, juegos y música
-    GatewayIntentBits.GuildMembers,       // Permite leer nicks y perfiles
-    GatewayIntentBits.MessageContent,     // Permite leer el contenido de los mensajes
-    GatewayIntentBits.DirectMessages      // Permite responder en Mensajes Directos (MD)
+    GatewayIntentBits.GuildPresences,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.MessageContent,
+    GatewayIntentBits.DirectMessages
   ],
   partials: [Partials.Channel, Partials.Message]
 });
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-
-// Lista de modelos ordenados desde el principal hasta los fallbacks gratis
 const MODEL_FALLBACKS = ['gemini-3-flash', 'gemini-3.1-flash-lite', 'gemini-2.5-flash'];
-
-// Archivo de almacenamiento de memorias
 const MEMORY_FILE = './memory.json';
+
+// Estados y presencias aleatorias para su personalidad
+const ESTADOS_ALEATORIOS = [
+  "Observándote detenidamente... 🙂",
+  "Afilando los cuchillos... para cortar pastel 🎂",
+  "Sé dónde vives (en el servidor)",
+  "Sonríe, siempre hay alguien mirando 👁️",
+  "Planificando nuestro próximo encuentro",
+  "Todo está bajo control... por ahora",
+  "Escuchando tus latidos a través del micro",
+  "Buscando tu perfil en todas partes ✨"
+];
+
+const PRESENCIAS_ALEATORIAS = ['online', 'idle', 'dnd'];
 
 function cargarMemorias() {
   if (!fs.existsSync(MEMORY_FILE)) fs.writeFileSync(MEMORY_FILE, '{}');
   return JSON.parse(fs.readFileSync(MEMORY_FILE, 'utf8'));
 }
 
-function guardarMemoria(userId, dato) {
+function guardarMemoriaAutonoma(userId, dato) {
   const memorias = cargarMemorias();
   if (!memorias[userId]) memorias[userId] = [];
   memorias[userId].push({ fecha: new Date().toISOString(), dato });
@@ -39,18 +48,17 @@ function guardarMemoria(userId, dato) {
 
 function obtenerMemorias(userId) {
   const memorias = cargarMemorias();
-  return memorias[userId] ? memorias[userId].map(m => `- ${m.dato}`).join('\n') : 'Ninguna registrada.';
+  return memorias[userId] ? memorias[userId].map(m => `- ${m.dato}`).join('\n') : 'Ninguna guardada aún.';
 }
 
 function cargarPrompt() {
   try {
     return fs.readFileSync('prompt.txt', 'utf8');
   } catch (err) {
-    return 'Eres DAREK v1 revOlution, un bot avanzado de IA.';
+    return 'Eres DAREK v1 revOlution.';
   }
 }
 
-// Función con Fallback de Modelos para la llamada a la IA
 async function generarRespuestaIA(contents, systemInstruction) {
   for (const modelName of MODEL_FALLBACKS) {
     try {
@@ -61,76 +69,64 @@ async function generarRespuestaIA(contents, systemInstruction) {
       });
       return response.text;
     } catch (error) {
-      console.warn(`[DAREK Fallback] El modelo ${modelName} falló. Intentando con el siguiente...`, error.message);
+      console.warn(`[Fallback] ${modelName} falló:`, error.message);
     }
   }
-  throw new Error('Todos los modelos de IA fallaron.');
+  throw new Error('Todos los modelos fallaron.');
 }
 
-// Servidor de Auto Ping para Render Gratis
+// CAMBIO AUTÓNOMO Y ALEATORIO DE ESTADO Y PRESENCIA
+function cambiarEstadoAleatorio() {
+  const estadoRandom = ESTADOS_ALEATORIOS[Math.floor(Math.random() * ESTADOS_ALEATORIOS.length)];
+  const presenciaRandom = PRESENCIAS_ALEATORIAS[Math.floor(Math.random() * PRESENCIAS_ALEATORIAS.length)];
+
+  client.user.setPresence({
+    status: presenciaRandom,
+    activities: [{ name: 'Custom Status', type: ActivityType.Custom, state: estadoRandom }]
+  });
+}
+
+// Servidor de AutoPing para Render
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.end('DAREK v1 revOlution está activo.');
-}).listen(PORT, () => {
-  console.log(`[AutoPing] Servidor escuchando en el puerto ${PORT}`);
-});
+  res.end('DAREK v1 revOlution activo.');
+}).listen(PORT);
 
 client.once('ready', () => {
-  console.log(`[DAREK v1 revOlution] Online como ${client.user.tag}`);
+  console.log(`[DAREK] Vivo como ${client.user.tag}`);
   
-  // Estado inicial por defecto
-  client.user.setPresence({
-    status: 'online',
-    activities: [{ name: 'Analizando el entorno', type: ActivityType.Custom, state: 'DAREK Core v1' }]
-  });
+  // Cambia de estado al iniciar y luego aleatoriamente cada 15 a 45 minutos
+  cambiarEstadoAleatorio();
+  setInterval(() => {
+    cambiarEstadoAleatorio();
+  }, Math.floor(Math.random() * (2700000 - 900000 + 1)) + 900000);
 });
 
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
-  const nombreBot = client.user.username.toLowerCase();
+  const nombreBot = 'darek';
   const contenido = message.content.toLowerCase();
   const fueMencionado = message.mentions.has(client.user.id);
   const esDM = !message.guild;
   const contieneNombre = contenido.includes(nombreBot);
 
-  // Activación por mención, mensaje privado o si detecta su nombre en el chat
-  if (fueMencionado || esDM || contieneNombre) {
+  // Un 5% de probabilidad aleatoria de entrometerse en cualquier mensaje del canal
+  const intervieneAleatoriamente = Math.random() < 0.05;
+
+  if (fueMencionado || esDM || contieneNombre || intervieneAleatoriamente) {
     try {
       await message.channel.sendTyping();
 
-      // --- COMANDOS ADMINISTRATIVOS DE ESTADO Y PRESENCIA ---
-      if (message.content.startsWith('!estado')) {
-        const estadoTexto = message.content.replace('!estado', '').trim();
-        client.user.setPresence({
-          activities: [{ name: 'Custom Status', type: ActivityType.Custom, state: estadoTexto }]
-        });
-        return message.reply(`Estado personalizado actualizado a: "${estadoTexto}"`);
-      }
+      // Ocasionalmente cambia su estado cuando interactúa con alguien
+      if (Math.random() < 0.3) cambiarEstadoAleatorio();
 
-      if (message.content.startsWith('!presencia')) {
-        const modo = message.content.replace('!presencia', '').trim().toLowerCase();
-        // Modos: online, idle, dnd, invisible
-        if (['online', 'idle', 'dnd', 'invisible'].includes(modo)) {
-          client.user.setStatus(modo);
-          return message.reply(`Presencia cambiada a: ${modo}`);
-        }
-      }
-
-      // --- COMANDO DE MEMORIA A LARGO PLAZO ---
-      if (message.content.startsWith('!recordar')) {
-        const datoAMemorizar = message.content.replace('!recordar', '').trim();
-        guardarMemoria(message.author.id, datoAMemorizar);
-        return message.reply(`Guardado en mi memoria a largo plazo: "${datoAMemorizar}"`);
-      }
-
-      // --- LECTURA DE ACTIVIDAD DEL USUARIO QUE ESCRIBE ---
-      let datosActividad = 'Sin actividad pública detectable.';
+      // Lectura de actividad del usuario
+      let datosActividad = 'Sin información pública.';
       if (message.guild) {
         const miemb = await message.guild.members.fetch(message.author.id);
         const pres = miemb.presence;
-
         if (pres) {
           const actividades = pres.activities.map(a => {
             if (a.type === ActivityType.Custom) return `Estado: ${a.state || 'N/A'}`;
@@ -138,22 +134,20 @@ client.on('messageCreate', async (message) => {
             if (a.type === ActivityType.Listening) return `Escuchando: ${a.details || a.name}`;
             return `${a.name}`;
           }).join(' | ');
-
-          datosActividad = `Estatus: ${pres.status} | Actividades: [${actividades}]`;
+          datosActividad = `Estado: ${pres.status} | Actividades: [${actividades}]`;
         }
       }
 
-      // --- CAPTURA MÁXIMA DEL HISTORIAL DE MENSAJES DEL CANAL ---
-      const ultimosMensajes = await message.channel.messages.fetch({ limit: 20 });
+      // Historial extenso de conversación del grupo
+      const ultimosMensajes = await message.channel.messages.fetch({ limit: 25 });
       const historialFormateado = ultimosMensajes
         .reverse()
         .map(m => `${m.author.username}: ${m.content}`)
         .join('\n');
 
-      // --- PROCESAMIENTO DE IMÁGENES ---
+      // Imágenes
       let partesEntrada = [];
       const adjuntoImagen = message.attachments.find(a => a.contentType?.startsWith('image/'));
-
       if (adjuntoImagen) {
         const respuestaImg = await fetch(adjuntoImagen.url);
         const bufferArray = await respuestaImg.arrayBuffer();
@@ -165,24 +159,33 @@ client.on('messageCreate', async (message) => {
         });
       }
 
-      // --- CONSTRUCCIÓN DEL CONTEXTO COMPLETO ---
       const memoriasUsuario = obtenerMemorias(message.author.id);
+
       const systemPrompt = `${cargarPrompt()}
 
---- INFORMACIÓN EN TIEMPO REAL DEL USUARIO ---
-Usuario: ${message.author.username} (Nick: ${message.member?.displayName || message.author.username})
-Actividad detectada: ${datosActividad}
+--- DATOS EN TIEMPO REAL DEL USUARIO ---
+Usuario: ${message.author.username} (Apodo: ${message.member?.displayName || message.author.username})
+Actividad actual: ${datosActividad}
 
---- MEMORIAS A LARGO PLAZO DE ESTE USUARIO ---
+--- MEMORIAS IMPORTANTES DE ESTE USUARIO ---
 ${memoriasUsuario}
 
-Instrucciones adicionales: Si el usuario te pide cambiar tu estado o presencia por texto normal, infórmale que use "!estado [texto]" o "!presencia [online/idle/dnd]".`;
+INSTRUCCIÓN DE AUTONOMÍA:
+Si el usuario revela algo personal o relevante sobre sí mismo en el mensaje, extrae ese dato de forma invisible y escríbelo al FINAL de tu respuesta usando el formato exacto:
+[MEMORIA: el usuario dijo que...]
+El bot lo guardará automáticamente sin que parezca un comando.`;
 
-      const promptEntrada = `Historial reciente del canal:\n${historialFormateado}\n\nMensaje actual de ${message.author.username}: ${message.content}`;
+      const promptEntrada = `Historial del grupo:\n${historialFormateado}\n\nMensaje de ${message.author.username}: ${message.content}`;
       partesEntrada.push(promptEntrada);
 
-      // Generar respuesta con la IA usando la función de Fallback
-      const respuestaIA = await generarRespuestaIA(partesEntrada, systemPrompt);
+      let respuestaIA = await generarRespuestaIA(partesEntrada, systemPrompt);
+
+      // Detectar si la IA extrajo una memoria automáticamente
+      const matchMemoria = respuestaIA.match(/\[MEMORIA:\s*(.*?)\]/i);
+      if (matchMemoria) {
+        guardarMemoriaAutonoma(message.author.id, matchMemoria[1]);
+        respuestaIA = respuestaIA.replace(/\[MEMORIA:\s*(.*?)\]/i, '').trim();
+      }
 
       if (respuestaIA.length > 2000) {
         const fragmentos = respuestaIA.match(/[\s\S]{1,1900}/g);
@@ -192,8 +195,7 @@ Instrucciones adicionales: Si el usuario te pide cambiar tu estado o presencia p
       }
 
     } catch (error) {
-      console.error('Error al procesar solicitud en DAREK:', error);
-      await message.reply('Ocurrió un error al procesar tu solicitud.');
+      console.error('Error en DAREK:', error);
     }
   }
 });
