@@ -1,5 +1,5 @@
 const { Client, GatewayIntentBits, ActivityType, Partials } = require('discord.js');
-const { GoogleGenAI } = require('@google/genai');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 const fs = require('fs');
 const http = require('http');
 require('dotenv').config();
@@ -16,11 +16,28 @@ const client = new Client({
   partials: [Partials.Channel, Partials.Message]
 });
 
-const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY });
-const MODEL_FALLBACKS = ['gemini-3-flash', 'gemini-3.1-flash-lite', 'gemini-2.5-flash'];
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+const MODEL_FALLBACKS = [
+  // --- NIVEL LITE (Latencia ultra-baja y alta escala) ---
+  'gemini-2.5-flash-lite', // El más barato del ecosistema ($0.10/M tokens)
+  'gemini-3.1-flash-lite', // Versión Lite inicial de la generación 3
+  'gemini-3.5-flash-lite', // El modelo Lite más avanzado y rápido
+
+  // --- NIVEL FLASH (Equilibrio perfecto velocidad/capacidad) ---
+  'gemini-2.5-flash',      // El balance clásico y muy estable
+  'gemini-3.5-flash',      // Estándar multitarea con mejor procesamiento
+  'gemini-3.6-flash',      // Iteración optimizada para ejecución rápida
+  'gemini-3.7-flash',      // Líder en generación de código y flujos autónomos
+  'gemini-3.8-flash',      // El modelo Flash más moderno, rápido y capaz (Septiembre 2026)
+
+  // --- NIVEL PRO / DEEP THINK (Máximo razonamiento) ---
+  'gemini-2.5-pro',        // Pensamiento adaptativo estable para tareas complejas
+  'gemini-3.1-pro'         // La inteligencia frontera definitiva para código pesado
+];
+
 const MEMORY_FILE = './memory.json';
 
-// Estados y presencias aleatorias para su personalidad
+// Estados y presencias aleatorias
 const ESTADOS_ALEATORIOS = [
   "Observándote detenidamente... 🙂",
   "Afilando los cuchillos... para cortar pastel 🎂",
@@ -36,7 +53,11 @@ const PRESENCIAS_ALEATORIAS = ['online', 'idle', 'dnd'];
 
 function cargarMemorias() {
   if (!fs.existsSync(MEMORY_FILE)) fs.writeFileSync(MEMORY_FILE, '{}');
-  return JSON.parse(fs.readFileSync(MEMORY_FILE, 'utf8'));
+  try {
+    return JSON.parse(fs.readFileSync(MEMORY_FILE, 'utf8'));
+  } catch (e) {
+    return {};
+  }
 }
 
 function guardarMemoriaAutonoma(userId, dato) {
@@ -62,12 +83,13 @@ function cargarPrompt() {
 async function generarRespuestaIA(contents, systemInstruction) {
   for (const modelName of MODEL_FALLBACKS) {
     try {
-      const response = await ai.models.generateContent({
+      const model = genAI.getGenerativeModel({
         model: modelName,
-        contents: contents,
-        config: { systemInstruction: systemInstruction }
+        systemInstruction: systemInstruction
       });
-      return response.text;
+
+      const result = await model.generateContent(contents);
+      return result.response.text();
     } catch (error) {
       console.warn(`[Fallback] ${modelName} falló:`, error.message);
     }
@@ -75,7 +97,6 @@ async function generarRespuestaIA(contents, systemInstruction) {
   throw new Error('Todos los modelos fallaron.');
 }
 
-// CAMBIO AUTÓNOMO Y ALEATORIO DE ESTADO Y PRESENCIA
 function cambiarEstadoAleatorio() {
   const estadoRandom = ESTADOS_ALEATORIOS[Math.floor(Math.random() * ESTADOS_ALEATORIOS.length)];
   const presenciaRandom = PRESENCIAS_ALEATORIAS[Math.floor(Math.random() * PRESENCIAS_ALEATORIAS.length)];
@@ -91,13 +112,15 @@ const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
   res.end('DAREK v1 revOlution activo.');
-}).listen(PORT);
+}).listen(PORT, () => {
+  console.log(`[AutoPing] Servidor escuchando en puerto ${PORT}`);
+});
 
 client.once('ready', () => {
   console.log(`[DAREK] Vivo como ${client.user.tag}`);
-  
-  // Cambia de estado al iniciar y luego aleatoriamente cada 15 a 45 minutos
+
   cambiarEstadoAleatorio();
+  // Cambia de estado aleatoriamente cada 15 a 45 minutos
   setInterval(() => {
     cambiarEstadoAleatorio();
   }, Math.floor(Math.random() * (2700000 - 900000 + 1)) + 900000);
@@ -112,42 +135,43 @@ client.on('messageCreate', async (message) => {
   const esDM = !message.guild;
   const contieneNombre = contenido.includes(nombreBot);
 
-  // Un 5% de probabilidad aleatoria de entrometerse en cualquier mensaje del canal
+  // 5% de probabilidad aleatoria de intervenir espontáneamente en cualquier chat
   const intervieneAleatoriamente = Math.random() < 0.05;
 
   if (fueMencionado || esDM || contieneNombre || intervieneAleatoriamente) {
     try {
       await message.channel.sendTyping();
 
-      // Ocasionalmente cambia su estado cuando interactúa con alguien
       if (Math.random() < 0.3) cambiarEstadoAleatorio();
 
-      // Lectura de actividad del usuario
       let datosActividad = 'Sin información pública.';
       if (message.guild) {
-        const miemb = await message.guild.members.fetch(message.author.id);
-        const pres = miemb.presence;
-        if (pres) {
-          const actividades = pres.activities.map(a => {
-            if (a.type === ActivityType.Custom) return `Estado: ${a.state || 'N/A'}`;
-            if (a.type === ActivityType.Playing) return `Jugando a: ${a.name}`;
-            if (a.type === ActivityType.Listening) return `Escuchando: ${a.details || a.name}`;
-            return `${a.name}`;
-          }).join(' | ');
-          datosActividad = `Estado: ${pres.status} | Actividades: [${actividades}]`;
+        try {
+          const miemb = await message.guild.members.fetch(message.author.id);
+          const pres = miemb.presence;
+          if (pres) {
+            const actividades = pres.activities.map(a => {
+              if (a.type === ActivityType.Custom) return `Estado: ${a.state || 'N/A'}`;
+              if (a.type === ActivityType.Playing) return `Jugando a: ${a.name}`;
+              if (a.type === ActivityType.Listening) return `Escuchando: ${a.details || a.name}`;
+              return `${a.name}`;
+            }).join(' | ');
+            datosActividad = `Estado: ${pres.status} | Actividades: [${actividades}]`;
+          }
+        } catch (e) {
+          datosActividad = 'No se pudo leer la presencia.';
         }
       }
 
-      // Historial extenso de conversación del grupo
       const ultimosMensajes = await message.channel.messages.fetch({ limit: 25 });
-      const historialFormateado = ultimosMensajes
+      const historialFormateado = Array.from(ultimosMensajes.values())
         .reverse()
         .map(m => `${m.author.username}: ${m.content}`)
         .join('\n');
 
-      // Imágenes
       let partesEntrada = [];
       const adjuntoImagen = message.attachments.find(a => a.contentType?.startsWith('image/'));
+
       if (adjuntoImagen) {
         const respuestaImg = await fetch(adjuntoImagen.url);
         const bufferArray = await respuestaImg.arrayBuffer();
@@ -180,7 +204,6 @@ El bot lo guardará automáticamente sin que parezca un comando.`;
 
       let respuestaIA = await generarRespuestaIA(partesEntrada, systemPrompt);
 
-      // Detectar si la IA extrajo una memoria automáticamente
       const matchMemoria = respuestaIA.match(/\[MEMORIA:\s*(.*?)\]/i);
       if (matchMemoria) {
         guardarMemoriaAutonoma(message.author.id, matchMemoria[1]);
