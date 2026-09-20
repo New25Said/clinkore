@@ -49,6 +49,9 @@ const MODEL_FALLBACKS = MODEL_ENDPOINTS.map(url => {
 const MEMORY_FILE = './memory.json';
 const PRESENCIAS_ALEATORIAS = ['online', 'idle', 'dnd'];
 
+// Función auxiliar para esperar N milisegundos cuando hay error 429
+const esperar = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
 function cargarMemorias() {
   if (!fs.existsSync(MEMORY_FILE)) fs.writeFileSync(MEMORY_FILE, '{}');
   try {
@@ -90,12 +93,16 @@ async function generarRespuestaIA(contents, systemInstruction) {
       return result.response.text();
     } catch (error) {
       console.warn(`[Fallback] El modelo ${modelName} falló:`, error.message);
+      // Pausa de 1.5 segundos si se golpea el límite de velocidad (Rate Limit / Quota Exceeded)
+      if (error.message.includes('429') || error.message.includes('Quota exceeded')) {
+        await esperar(1500);
+      }
     }
   }
-  throw new Error('Todos los modelos fallaron.');
+  throw new Error('Todos los modelos fallaron debido a cuota o conexión.');
 }
 
-// Genera un estado personalizado dinámico y dinámicamente creado por la IA según su personalidad
+// Genera un estado personalizado dinámico creado por la IA según su personalidad
 async function cambiarEstadoAleatorio() {
   const presenciaRandom = PRESENCIAS_ALEATORIAS[Math.floor(Math.random() * PRESENCIAS_ALEATORIAS.length)];
   let estadoGenerado = 'Pensando en ti... 🙂';
@@ -104,10 +111,10 @@ async function cambiarEstadoAleatorio() {
     const promptEstado = `${cargarPrompt()}\n\nTAREA: Genera una frase o estado personalizado MUY CORTO para tu perfil de Discord (máximo 12 palabras). Debe reflejar tu personalidad de psicópata amigable. NO uses comillas, NO des explicaciones, solo escribe el texto del estado.`;
     const respuesta = await generarRespuestaIA(['Genera tu estado de perfil actual.'], promptEstado);
     if (respuesta && respuesta.trim()) {
-      estadoGenerado = respuesta.trim().substring(0, 128); // Límite de caracteres de Discord
+      estadoGenerado = respuesta.trim().substring(0, 128);
     }
   } catch (err) {
-    console.error('Error al generar estado con IA, usando fallback:', err);
+    console.error('Error al generar estado con IA (Cuota agotada temporalmente), usando estado base.');
   }
 
   client.user.setPresence({
@@ -129,10 +136,10 @@ client.once('ready', () => {
   console.log(`[DAREK] Vivo como ${client.user.tag}`);
 
   cambiarEstadoAleatorio();
-  // Cambia de estado aleatoriamente cada 15 a 45 minutos
+  // Cambia de estado aleatoriamente cada 20 a 50 minutos para cuidar la cuota gratuita
   setInterval(() => {
     cambiarEstadoAleatorio();
-  }, Math.floor(Math.random() * (2700000 - 900000 + 1)) + 900000);
+  }, Math.floor(Math.random() * (3000000 - 1200000 + 1)) + 1200000);
 });
 
 client.on('messageCreate', async (message) => {
@@ -150,8 +157,6 @@ client.on('messageCreate', async (message) => {
   if (fueMencionado || esDM || contieneNombre || intervieneAleatoriamente) {
     try {
       await message.channel.sendTyping();
-
-      if (Math.random() < 0.3) cambiarEstadoAleatorio();
 
       let datosActividad = 'Sin información pública.';
       if (message.guild) {
@@ -227,7 +232,7 @@ El bot lo guardará automáticamente sin que parezca un comando.`;
       }
 
     } catch (error) {
-      console.error('Error en DAREK:', error);
+      console.error('Error en DAREK:', error.message);
     }
   }
 });
