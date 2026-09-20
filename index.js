@@ -120,6 +120,17 @@ async function cambiarEstadoAleatorio() {
   });
 }
 
+// Tirada de dado autónoma para cambiar estado aleatoriamente tras un tiempo variable
+function programarSiguienteCambioDeEstado() {
+  const dado = Math.floor(Math.random() * 6) + 1; // Tirada de dado de 1 a 6
+  const tiempoEsperaMs = dado * 300000; // Entre 5 minutos (1) y 30 minutos (6)
+
+  setTimeout(() => {
+    cambiarEstadoAleatorio();
+    programarSiguienteCambioDeEstado(); // Repetir ciclo
+  }, tiempoEsperaMs);
+}
+
 // Servidor de AutoPing para Render
 const PORT = process.env.PORT || 3000;
 http.createServer((req, res) => {
@@ -133,9 +144,7 @@ client.once('ready', () => {
   console.log(`[DAREK] Vivo como ${client.user.tag}`);
 
   cambiarEstadoAleatorio();
-  setInterval(() => {
-    cambiarEstadoAleatorio();
-  }, Math.floor(Math.random() * (3000000 - 1200000 + 1)) + 1200000);
+  programarSiguienteCambioDeEstado();
 });
 
 client.on('messageCreate', async (message) => {
@@ -196,8 +205,14 @@ client.on('messageCreate', async (message) => {
 
       const systemPrompt = `${cargarPrompt()}
 
---- REGLA DE VELOCIDAD ---
-Responde de forma MUY CORTA, CONCISA Y RÁPIDA (máximo 2 a 3 oraciones cortas). No des explicaciones largas ni rodeos.
+--- REGLA DE VELOCIDAD Y MENSAJES MÚLTIPLES ---
+Responde de forma MUY CORTA Y RÁPIDA. 
+Si deseas enviar más de un mensaje seguido para simular ser una persona real escribiendo varias veces, separa los mensajes usando el texto exacto: |||
+Ejemplo: "Holaaaa ||| ¿Qué estabas haciendo?"
+
+--- AUTONOMÍA DE ESTADO ---
+Si el usuario te pide cambiar de estado o si tú mismo deseas cambiarlo libremente en la conversación, añade al FINAL de tu respuesta:
+[ESTADO: tu nuevo texto de estado aquí]
 
 --- DATOS EN TIEMPO REAL DEL USUARIO ---
 Usuario: ${message.author.username} (Apodo: ${message.member?.displayName || message.author.username})
@@ -214,19 +229,41 @@ El bot lo guardará automáticamente sin que parezca un comando.`;
       const promptEntrada = `Historial del grupo:\n${historialFormateado}\n\nMensaje de ${message.author.username}: ${message.content}`;
       partesEntrada.push(promptEntrada);
 
-      let respuestaIA = await generarRespuestaIA(partesEntrada, systemPrompt, 200);
+      let respuestaIA = await generarRespuestaIA(partesEntrada, systemPrompt, 300);
 
+      // Detectar orden autónoma de cambio de estado desde la respuesta de la IA
+      const matchEstado = respuestaIA.match(/\[ESTADO:\s*(.*?)\]/i);
+      if (matchEstado) {
+        const nuevoEstadoTexto = matchEstado[1].trim().substring(0, 128);
+        client.user.setPresence({
+          status: PRESENCIAS_ALEATORIAS[Math.floor(Math.random() * PRESENCIAS_ALEATORIAS.length)],
+          activities: [{ name: 'Custom Status', type: ActivityType.Custom, state: nuevoEstadoTexto }]
+        });
+        respuestaIA = respuestaIA.replace(/\[ESTADO:\s*(.*?)\]/i, '').trim();
+      }
+
+      // Detectar si la IA extrajo una memoria automáticamente
       const matchMemoria = respuestaIA.match(/\[MEMORIA:\s*(.*?)\]/i);
       if (matchMemoria) {
         guardarMemoriaAutonoma(message.author.id, matchMemoria[1]);
         respuestaIA = respuestaIA.replace(/\[MEMORIA:\s*(.*?)\]/i, '').trim();
       }
 
-      if (respuestaIA.length > 2000) {
-        const fragmentos = respuestaIA.match(/[\s\S]{1,1900}/g);
-        for (const chunk of fragmentos) await message.reply(chunk);
-      } else {
-        await message.reply(respuestaIA);
+      // Envío de mensajes seguidos utilizando el separador |||
+      const mensajesSeguidos = respuestaIA.split('|||').map(m => m.trim()).filter(m => m.length > 0);
+
+      for (let i = 0; i < mensajesSeguidos.length; i++) {
+        const msgTexto = mensajesSeguidos[i];
+        if (msgTexto.length > 2000) {
+          const fragmentos = msgTexto.match(/[\s\S]{1,1900}/g);
+          for (const chunk of fragmentos) await message.reply(chunk);
+        } else {
+          await message.reply(msgTexto);
+        }
+        // Pequeña pausa natural entre mensajes si envía más de uno
+        if (i < mensajesSeguidos.length - 1) {
+          await new Promise(r => setTimeout(r, 1200));
+        }
       }
 
     } catch (error) {
