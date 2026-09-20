@@ -78,7 +78,7 @@ function cargarPrompt() {
   }
 }
 
-async function generarRespuestaIA(contents, systemInstruction, maxTokens = 250) {
+async function generarRespuestaIA(contents, systemInstruction, maxTokens = 100) {
   for (const modelName of MODEL_FALLBACKS) {
     try {
       const model = genAI.getGenerativeModel({
@@ -106,7 +106,7 @@ async function cambiarEstadoAleatorio() {
 
   try {
     const promptEstado = `${cargarPrompt()}\n\nTAREA: Genera una frase MUY CORTA para tu estado (máximo 6 palabras). Sé conciso y directo. NO comillas.`;
-    const respuesta = await generarRespuestaIA(['Estado actual.'], promptEstado, 30);
+    const respuesta = await generarRespuestaIA(['Estado actual.'], promptEstado, 25);
     if (respuesta && respuesta.trim()) {
       estadoGenerado = respuesta.trim().substring(0, 128);
     }
@@ -165,20 +165,26 @@ client.on('messageCreate', async (message) => {
       let datosActividad = 'Sin información pública.';
       if (message.guild) {
         try {
-          // Obtener presencia de la caché del servidor o del miembro
-          const pres = message.guild.presences.cache.get(message.author.id) || message.member?.presence;
-          if (pres) {
-            const actividades = pres.activities.map(a => {
-              if (a.type === ActivityType.Custom) return `Estado: ${a.state || 'N/A'}`;
+          // Forzar la actualización en tiempo real del miembro y su presencia
+          const miembroActualizado = await message.guild.members.fetch({ user: message.author.id, force: true });
+          const pres = miembroActualizado.presence;
+
+          if (pres && pres.activities && pres.activities.length > 0) {
+            const listaActividades = pres.activities.map(a => {
+              if (a.type === ActivityType.Custom) return `Estado personalizado: "${a.state || 'N/A'}"`;
               if (a.type === ActivityType.Playing) return `Jugando a: ${a.name}`;
-              if (a.type === ActivityType.Listening) return `Escuchando: ${a.details ? a.details + ' - ' + a.name : a.name}`;
-              if (a.type === ActivityType.Streaming) return `Transmitiendo: ${a.name}`;
-              return `${a.name}`;
+              if (a.type === ActivityType.Listening) return `Escuchando: ${a.details ? a.details + ' en ' + a.name : a.name}`;
+              if (a.type === ActivityType.Streaming) return `En directo: ${a.name}`;
+              if (a.type === ActivityType.Watching) return `Viendo: ${a.name}`;
+              return `Actividad: ${a.name}`;
             }).join(' | ');
-            datosActividad = `Estado: ${pres.status} | Actividades: [${actividades || 'Ninguna'}]`;
+
+            datosActividad = `Estado general: ${pres.status} | Detalle de actividades: [${listaActividades}]`;
+          } else if (pres) {
+            datosActividad = `Estado general: ${pres.status} | Sin juegos ni música activos en este momento.`;
           }
         } catch (e) {
-          datosActividad = 'No se pudo leer la presencia.';
+          datosActividad = 'No se pudo obtener la presencia del usuario.';
         }
       }
 
@@ -206,33 +212,25 @@ client.on('messageCreate', async (message) => {
 
       const systemPrompt = `${cargarPrompt()}
 
---- REGLAS ESTRICTAS DE CONTESTACIÓN ---
-- Tus respuestas deben ser ULTRA CORTAS y directas (MÁXIMO 1 o 2 oraciones cortas).
-- En el 99% de los casos, envía SOLO UN mensaje.
-- Usar el separador ||| para enviar un segundo mensaje debe ser un EVENTO EXTRAORDINARIO Y MUY RARO (solo si es súper necesario decir algo extra).
-
---- AUTONOMÍA DE ESTADO ---
-Si el usuario te pide cambiar de estado o si tú mismo deseas cambiarlo libremente en la conversación, añade al FINAL de tu respuesta:
-[ESTADO: tu nuevo texto de estado aquí]
-
 --- DATOS EN TIEMPO REAL DEL USUARIO ---
 Usuario: ${message.author.username} (Apodo: ${message.member?.displayName || message.author.username})
-Actividad actual: ${datosActividad}
+Actividad actual del usuario en Discord: ${datosActividad}
 
 --- MEMORIAS IMPORTANTES DE ESTE USUARIO ---
 ${memoriasUsuario}
 
-INSTRUCCIÓN DE AUTONOMÍA:
-Si el usuario revela algo personal o relevante sobre sí mismo en el mensaje, extrae ese dato de forma invisible y escríbelo al FINAL de tu respuesta usando el formato exacto:
-[MEMORIA: el usuario dijo que...]
-El bot lo guardará automáticamente sin que parezca un comando.`;
+AUTONOMÍA DE ESTADO:
+Si se requiere cambiar de estado en Discord, pon al FINAL: [ESTADO: texto]
+
+AUTONOMÍA DE MEMORIA:
+Si el usuario revela algo relevante, pon al FINAL: [MEMORIA: dato]`;
 
       const promptEntrada = `Historial del grupo:\n${historialFormateado}\n\nMensaje de ${message.author.username}: ${message.content}`;
       partesEntrada.push(promptEntrada);
 
-      let respuestaIA = await generarRespuestaIA(partesEntrada, systemPrompt, 200);
+      let respuestaIA = await generarRespuestaIA(partesEntrada, systemPrompt, 100);
 
-      // Detectar orden autónoma de cambio de estado desde la respuesta de la IA
+      // Detectar cambio de estado
       const matchEstado = respuestaIA.match(/\[ESTADO:\s*(.*?)\]/i);
       if (matchEstado) {
         const nuevoEstadoTexto = matchEstado[1].trim().substring(0, 128);
@@ -243,21 +241,20 @@ El bot lo guardará automáticamente sin que parezca un comando.`;
         respuestaIA = respuestaIA.replace(/\[ESTADO:\s*(.*?)\]/i, '').trim();
       }
 
-      // Detectar si la IA extrajo una memoria automáticamente
+      // Detectar memoria
       const matchMemoria = respuestaIA.match(/\[MEMORIA:\s*(.*?)\]/i);
       if (matchMemoria) {
         guardarMemoriaAutonoma(message.author.id, matchMemoria[1]);
         respuestaIA = respuestaIA.replace(/\[MEMORIA:\s*(.*?)\]/i, '').trim();
       }
 
-      // Envío de mensajes
+      // Procesar envío de mensajes
       const mensajesSeguidos = respuestaIA.split('|||').map(m => m.trim()).filter(m => m.length > 0);
 
       for (let i = 0; i < mensajesSeguidos.length; i++) {
         const msgTexto = mensajesSeguidos[i];
-        
+
         if (i === 0) {
-          // El primer mensaje responde directamente al mensaje del usuario
           if (msgTexto.length > 2000) {
             const fragmentos = msgTexto.match(/[\s\S]{1,1900}/g);
             for (const chunk of fragmentos) await message.reply(chunk);
@@ -265,9 +262,9 @@ El bot lo guardará automáticamente sin que parezca un comando.`;
             await message.reply(msgTexto);
           }
         } else {
-          // Los mensajes secundarios NO están linkeados/mencionados (se envían sueltos al canal)
+          // Mensaje secundario (desacoplado / no linkeado)
           await message.channel.sendTyping();
-          await new Promise(r => setTimeout(r, 1000)); // Pausa natural antes del segundo mensaje
+          await new Promise(r => setTimeout(r, 1200));
           if (msgTexto.length > 2000) {
             const fragmentos = msgTexto.match(/[\s\S]{1,1900}/g);
             for (const chunk of fragmentos) await message.channel.send(chunk);
