@@ -18,7 +18,6 @@ const client = new Client({
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// Cargar configuración externa de identidad
 function cargarConfiguracion() {
   try {
     if (fs.existsSync('./config.json')) {
@@ -27,15 +26,11 @@ function cargarConfiguracion() {
   } catch (e) {
     console.error('[ClinKore Engine] Error al leer config.json:', e.message);
   }
-  return {
-    nombre: 'bot',
-    apodos: []
-  };
+  return { nombre: 'bot', apodos: [] };
 }
 
 const botConfig = cargarConfiguracion();
 
-// Endpoints / Modelos en orden de fallback exacto
 const MODEL_ENDPOINTS = [
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent',
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent',
@@ -115,7 +110,6 @@ async function generarRespuestaIA(contents, systemInstruction, maxTokens = 150) 
   throw new Error('Todos los modelos de la lista fallaron.');
 }
 
-// Aplicar un estado personalizado sin tocar la programación del dado
 function aplicarEstadoEnDiscord(textoEstado) {
   const presenciaRandom = PRESENCIAS_ALEATORIAS[Math.floor(Math.random() * PRESENCIAS_ALEATORIAS.length)];
   client.user.setPresence({
@@ -124,7 +118,6 @@ function aplicarEstadoEnDiscord(textoEstado) {
   });
 }
 
-// Genera un estado aleatorio usando la IA y su personalidad
 async function cambiarEstadoAleatorio() {
   try {
     const promptEstado = `${cargarPrompt()}\n\nTAREA: Genera un texto CORTÍSIMO para tu estado de perfil de Discord (máximo 6 palabras). Que sea 100% acorde a tu personalidad. NO comillas ni explicaciones.`;
@@ -137,15 +130,28 @@ async function cambiarEstadoAleatorio() {
   }
 }
 
-// Tirada de dado autónoma (5 a 15 minutos) que no se reinicia al cambiar estado manualmente
+// Dado de presencia e independencia: Cambia aleatoriamente entre 10 y 20 minutos
 function programarSiguienteCambioDeEstado() {
-  const minutosRandom = Math.floor(Math.random() * (15 - 5 + 1)) + 5; // Entre 5 y 15 minutos
+  const minutosRandom = Math.floor(Math.random() * (20 - 10 + 1)) + 10;
   const tiempoEsperaMs = minutosRandom * 60000;
 
   setTimeout(() => {
     cambiarEstadoAleatorio();
     programarSiguienteCambioDeEstado();
   }, tiempoEsperaMs);
+}
+
+// Web Scraping básico de links e inspección de contenido
+async function extraerContenidoUrl(url) {
+  try {
+    const res = await fetch(url, { headers: { 'User-Agent': 'Mozilla/5.0' } });
+    const html = await res.text();
+    const matchTitle = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+    const titulo = matchTitle ? matchTitle[1].trim() : 'Sin título';
+    return `[Enlace inspeccionado: ${url} | Título web: "${titulo}"]`;
+  } catch (e) {
+    return `[Enlace adjunto: ${url}]`;
+  }
 }
 
 // Servidor de AutoPing para Render
@@ -159,7 +165,6 @@ http.createServer((req, res) => {
 
 client.once('ready', () => {
   console.log(`[ClinKore v1] Online como ${client.user.tag}`);
-
   cambiarEstadoAleatorio();
   programarSiguienteCambioDeEstado();
 });
@@ -171,7 +176,6 @@ client.on('messageCreate', async (message) => {
   const fueMencionado = message.mentions.has(client.user.id);
   const esDM = !message.guild;
 
-  // Detonadores dinámicos leídos desde config.json
   const detonadores = [botConfig.nombre, ...(botConfig.apodos || [])].map(n => n.toLowerCase());
   const detectoNombreOApodo = detonadores.some(detonador => detonador && contenido.includes(detonador));
 
@@ -206,7 +210,7 @@ client.on('messageCreate', async (message) => {
         }
       }
 
-      // Máximo historial de mensajes para no confundirse
+      // Máximo historial de 50 mensajes para mantener contexto completo de ráfagas rápidas de mensajes
       const ultimosMensajes = await message.channel.messages.fetch({ limit: 50 });
       const historialFormateado = Array.from(ultimosMensajes.values())
         .reverse()
@@ -214,17 +218,33 @@ client.on('messageCreate', async (message) => {
         .join('\n');
 
       let partesEntrada = [];
-      const adjuntoImagen = message.attachments.find(a => a.contentType?.startsWith('image/'));
+      let infoArchivosAdjuntos = [];
 
-      if (adjuntoImagen) {
-        const respuestaImg = await fetch(adjuntoImagen.url);
-        const bufferArray = await respuestaImg.arrayBuffer();
-        partesEntrada.push({
-          inlineData: {
-            data: Buffer.from(bufferArray).toString('base64'),
-            mimeType: adjuntoImagen.contentType
-          }
-        });
+      // Procesamiento de imágenes, gifs, videos y archivos
+      for (const [id, attachment] of message.attachments) {
+        const mime = attachment.contentType || '';
+        if (mime.startsWith('image/')) {
+          const respuestaImg = await fetch(attachment.url);
+          const bufferArray = await respuestaImg.arrayBuffer();
+          partesEntrada.push({
+            inlineData: {
+              data: Buffer.from(bufferArray).toString('base64'),
+              mimeType: mime
+            }
+          });
+        } else {
+          infoArchivosAdjuntos.push(`[Adjunto recibido: ${attachment.name} (${mime}) - URL: ${attachment.url}]`);
+        }
+      }
+
+      // Web Scraping de URLs detectadas en el mensaje
+      const urlRegex = /(https?:\/\/[^\s]+)/g;
+      const urlsEncontradas = message.content.match(urlRegex);
+      if (urlsEncontradas) {
+        for (const url of urlsEncontradas) {
+          const infoUrl = await extraerContenidoUrl(url);
+          infoArchivosAdjuntos.push(infoUrl);
+        }
       }
 
       const memoriasUsuario = obtenerMemorias(message.author.id);
@@ -235,8 +255,14 @@ client.on('messageCreate', async (message) => {
 Usuario: ${message.author.username} (Apodo: ${message.member?.displayName || message.author.username})
 Actividad actual del usuario: ${datosActividad}
 
+--- ARCHIVOS Y ENLACES DETECTADOS ---
+${infoArchivosAdjuntos.length > 0 ? infoArchivosAdjuntos.join('\n') : 'Ninguno'}
+
 --- MEMORIAS A LARGO PLAZO DE ESTE USUARIO ---
 ${memoriasUsuario}
+
+REGLA DE RÁFAGAS DE MENSAJES:
+Si el usuario o el grupo enviaron varios mensajes seguidos en poco tiempo sobre el mismo tema, responde directamente abordando el tema global de la ráfaga de forma fluida.
 
 AUTONOMÍA DE ESTADO:
 Si se te pide cambiar de estado o deseas cambiarlo libremente en este instante, escribe al FINAL de tu respuesta: [ESTADO: texto del nuevo estado]
@@ -249,7 +275,7 @@ Si el usuario revela algo relevante sobre su vida o gustos, escribe al FINAL de 
 
       let respuestaIA = await generarRespuestaIA(partesEntrada, systemPrompt, 150);
 
-      // Detectar cambio de estado autónomo (Sin borrar ni alterar el temporizador activo)
+      // Detectar cambio de estado autónomo
       const matchEstado = respuestaIA.match(/\[ESTADO:\s*(.*?)\]/i);
       if (matchEstado) {
         const nuevoEstadoTexto = matchEstado[1].trim().substring(0, 128);
@@ -271,10 +297,9 @@ Si el usuario revela algo relevante sobre su vida o gustos, escribe al FINAL de 
         const msgTexto = mensajesSeguidos[i];
 
         if (esDM) {
-          // En MD nunca realiza reply/linkeo
           if (i > 0) {
             await message.channel.sendTyping();
-            await new Promise(r => setTimeout(r, 1200));
+            await new Promise(r => setTimeout(r, 1000));
           }
           if (msgTexto.length > 2000) {
             const fragmentos = msgTexto.match(/[\s\S]{1,1900}/g);
@@ -283,17 +308,19 @@ Si el usuario revela algo relevante sobre su vida o gustos, escribe al FINAL de 
             await message.channel.send(msgTexto);
           }
         } else {
-          // En servidores: el primer mensaje cita/reply, los siguientes se envían sueltos
           if (i === 0) {
+            // RESPUESTA VINCULADA SIN RESALTADO AMARILLO (repliedUser: false)
             if (msgTexto.length > 2000) {
               const fragmentos = msgTexto.match(/[\s\S]{1,1900}/g);
-              for (const chunk of fragmentos) await message.reply(chunk);
+              for (const chunk of fragmentos) {
+                await message.reply({ content: chunk, allowedMentions: { repliedUser: false } });
+              }
             } else {
-              await message.reply(msgTexto);
+              await message.reply({ content: msgTexto, allowedMentions: { repliedUser: false } });
             }
           } else {
             await message.channel.sendTyping();
-            await new Promise(r => setTimeout(r, 1200));
+            await new Promise(r => setTimeout(r, 1000));
             if (msgTexto.length > 2000) {
               const fragmentos = msgTexto.match(/[\s\S]{1,1900}/g);
               for (const chunk of fragmentos) await message.channel.send(chunk);
