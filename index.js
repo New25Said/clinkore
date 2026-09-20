@@ -18,7 +18,7 @@ const client = new Client({
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
 
-// Endpoints / Modelos en orden de fallback exacto solicitado
+// Endpoints / Modelos en orden de fallback exacto
 const MODEL_ENDPOINTS = [
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent',
   'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent',
@@ -78,7 +78,7 @@ function cargarPrompt() {
   }
 }
 
-async function generarRespuestaIA(contents, systemInstruction, maxTokens = 100) {
+async function generarRespuestaIA(contents, systemInstruction, maxTokens = 120) {
   for (const modelName of MODEL_FALLBACKS) {
     try {
       const model = genAI.getGenerativeModel({
@@ -106,7 +106,7 @@ async function cambiarEstadoAleatorio() {
 
   try {
     const promptEstado = `${cargarPrompt()}\n\nTAREA: Genera una frase MUY CORTA para tu estado (máximo 6 palabras). Sé conciso y directo. NO comillas.`;
-    const respuesta = await generarRespuestaIA(['Estado actual.'], promptEstado, 25);
+    const respuesta = await generarRespuestaIA(['Estado actual.'], promptEstado, 30);
     if (respuesta && respuesta.trim()) {
       estadoGenerado = respuesta.trim().substring(0, 128);
     }
@@ -127,7 +127,7 @@ function programarSiguienteCambioDeEstado() {
 
   setTimeout(() => {
     cambiarEstadoAleatorio();
-    programarSiguienteCambioDeEstado(); // Repetir ciclo
+    programarSiguienteCambioDeEstado();
   }, tiempoEsperaMs);
 }
 
@@ -165,25 +165,25 @@ client.on('messageCreate', async (message) => {
       let datosActividad = 'Sin información pública.';
       if (message.guild) {
         try {
-          // Obtener presencia directamente desde la caché del servidor o del objeto del mensaje
+          // Lectura directa de presencias mediante cache de guild/miembro
           const pres = message.guild.presences.cache.get(message.author.id) || message.member?.presence;
 
           if (pres && pres.activities && pres.activities.length > 0) {
-            const listaActividades = pres.activities.map(a => {
+            const actividades = pres.activities.map(a => {
               if (a.type === ActivityType.Custom) return `Estado personalizado: "${a.state || 'N/A'}"`;
               if (a.type === ActivityType.Playing) return `Jugando a: ${a.name}`;
-              if (a.type === ActivityType.Listening) return `Escuchando: ${a.details ? a.details + ' en ' + a.name : a.name}`;
+              if (a.type === ActivityType.Listening) return `Escuchando: ${a.details ? a.details + ' - ' + a.name : a.name}`;
               if (a.type === ActivityType.Streaming) return `En directo: ${a.name}`;
               if (a.type === ActivityType.Watching) return `Viendo: ${a.name}`;
               return `Actividad: ${a.name}`;
             }).join(' | ');
 
-            datosActividad = `Estado general: ${pres.status} | Detalle de actividades: [${listaActividades}]`;
+            datosActividad = `Estado: ${pres.status} | Actividades: [${actividades}]`;
           } else if (pres) {
-            datosActividad = `Estado general: ${pres.status} | Sin juegos ni música activos en este momento.`;
+            datosActividad = `Estado: ${pres.status} | Sin juegos/música activos.`;
           }
         } catch (e) {
-          datosActividad = 'No se pudo obtener la presencia del usuario.';
+          datosActividad = 'No se pudo leer la presencia.';
         }
       }
 
@@ -213,7 +213,7 @@ client.on('messageCreate', async (message) => {
 
 --- DATOS EN TIEMPO REAL DEL USUARIO ---
 Usuario: ${message.author.username} (Apodo: ${message.member?.displayName || message.author.username})
-Actividad actual del usuario en Discord: ${datosActividad}
+Actividad actual: ${datosActividad}
 
 --- MEMORIAS IMPORTANTES DE ESTE USUARIO ---
 ${memoriasUsuario}
@@ -227,7 +227,7 @@ Si el usuario revela algo relevante, pon al FINAL: [MEMORIA: dato]`;
       const promptEntrada = `Historial del grupo:\n${historialFormateado}\n\nMensaje de ${message.author.username}: ${message.content}`;
       partesEntrada.push(promptEntrada);
 
-      let respuestaIA = await generarRespuestaIA(partesEntrada, systemPrompt, 100);
+      let respuestaIA = await generarRespuestaIA(partesEntrada, systemPrompt, 120);
 
       // Detectar cambio de estado
       const matchEstado = respuestaIA.match(/\[ESTADO:\s*(.*?)\]/i);
@@ -261,7 +261,6 @@ Si el usuario revela algo relevante, pon al FINAL: [MEMORIA: dato]`;
             await message.reply(msgTexto);
           }
         } else {
-          // Mensaje secundario (desacoplado / no linkeado)
           await message.channel.sendTyping();
           await new Promise(r => setTimeout(r, 1200));
           if (msgTexto.length > 2000) {
