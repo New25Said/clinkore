@@ -17,38 +17,36 @@ const client = new Client({
 });
 
 const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
-const MODEL_FALLBACKS = [
-  // --- NIVEL LITE (Latencia ultra-baja y alta escala) ---
-  'gemini-2.5-flash-lite', // El más barato del ecosistema ($0.10/M tokens)
-  'gemini-3.1-flash-lite', // Versión Lite inicial de la generación 3
-  'gemini-3.5-flash-lite', // El modelo Lite más avanzado y rápido
 
-  // --- NIVEL FLASH (Equilibrio perfecto velocidad/capacidad) ---
-  'gemini-2.5-flash',      // El balance clásico y muy estable
-  'gemini-3.5-flash',      // Estándar multitarea con mejor procesamiento
-  'gemini-3.6-flash',      // Iteración optimizada para ejecución rápida
-  'gemini-3.7-flash',      // Líder en generación de código y flujos autónomos
-  'gemini-3.8-flash',      // El modelo Flash más moderno, rápido y capaz (Septiembre 2026)
-
-  // --- NIVEL PRO / DEEP THINK (Máximo razonamiento) ---
-  'gemini-2.5-pro',        // Pensamiento adaptativo estable para tareas complejas
-  'gemini-3.1-pro'         // La inteligencia frontera definitiva para código pesado
+// Endpoints / Modelos en orden de fallback exacto solicitado
+const MODEL_ENDPOINTS = [
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent',
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent',
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent',
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent',
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent',
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent',
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent',
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent',
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent',
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-pro:generateContent',
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent',
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-lite:generateContent',
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent',
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent',
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-8b:generateContent',
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent',
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.0-pro:generateContent',
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent'
 ];
+
+// Mapeo automático de la lista de URLs hacia nombres de modelos para la SDK
+const MODEL_FALLBACKS = MODEL_ENDPOINTS.map(url => {
+  const match = url.match(/\/models\/([^:]+):/);
+  return match ? match[1] : 'gemini-1.5-flash';
+});
 
 const MEMORY_FILE = './memory.json';
-
-// Estados y presencias aleatorias
-const ESTADOS_ALEATORIOS = [
-  "Observándote detenidamente... 🙂",
-  "Afilando los cuchillos... para cortar pastel 🎂",
-  "Sé dónde vives (en el servidor)",
-  "Sonríe, siempre hay alguien mirando 👁️",
-  "Planificando nuestro próximo encuentro",
-  "Todo está bajo control... por ahora",
-  "Escuchando tus latidos a través del micro",
-  "Buscando tu perfil en todas partes ✨"
-];
-
 const PRESENCIAS_ALEATORIAS = ['online', 'idle', 'dnd'];
 
 function cargarMemorias() {
@@ -91,19 +89,30 @@ async function generarRespuestaIA(contents, systemInstruction) {
       const result = await model.generateContent(contents);
       return result.response.text();
     } catch (error) {
-      console.warn(`[Fallback] ${modelName} falló:`, error.message);
+      console.warn(`[Fallback] El modelo ${modelName} falló:`, error.message);
     }
   }
   throw new Error('Todos los modelos fallaron.');
 }
 
-function cambiarEstadoAleatorio() {
-  const estadoRandom = ESTADOS_ALEATORIOS[Math.floor(Math.random() * ESTADOS_ALEATORIOS.length)];
+// Genera un estado personalizado dinámico y dinámicamente creado por la IA según su personalidad
+async function cambiarEstadoAleatorio() {
   const presenciaRandom = PRESENCIAS_ALEATORIAS[Math.floor(Math.random() * PRESENCIAS_ALEATORIAS.length)];
+  let estadoGenerado = 'Pensando en ti... 🙂';
+
+  try {
+    const promptEstado = `${cargarPrompt()}\n\nTAREA: Genera una frase o estado personalizado MUY CORTO para tu perfil de Discord (máximo 12 palabras). Debe reflejar tu personalidad de psicópata amigable. NO uses comillas, NO des explicaciones, solo escribe el texto del estado.`;
+    const respuesta = await generarRespuestaIA(['Genera tu estado de perfil actual.'], promptEstado);
+    if (respuesta && respuesta.trim()) {
+      estadoGenerado = respuesta.trim().substring(0, 128); // Límite de caracteres de Discord
+    }
+  } catch (err) {
+    console.error('Error al generar estado con IA, usando fallback:', err);
+  }
 
   client.user.setPresence({
     status: presenciaRandom,
-    activities: [{ name: 'Custom Status', type: ActivityType.Custom, state: estadoRandom }]
+    activities: [{ name: 'Custom Status', type: ActivityType.Custom, state: estadoGenerado }]
   });
 }
 
