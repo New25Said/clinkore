@@ -165,9 +165,8 @@ client.on('messageCreate', async (message) => {
       let datosActividad = 'Sin información pública.';
       if (message.guild) {
         try {
-          // Forzar la actualización en tiempo real del miembro y su presencia
-          const miembroActualizado = await message.guild.members.fetch({ user: message.author.id, force: true });
-          const pres = miembroActualizado.presence;
+          // Obtener presencia directamente desde la caché del servidor o del objeto del mensaje
+          const pres = message.guild.presences.cache.get(message.author.id) || message.member?.presence;
 
           if (pres && pres.activities && pres.activities.length > 0) {
             const listaActividades = pres.activities.map(a => {
